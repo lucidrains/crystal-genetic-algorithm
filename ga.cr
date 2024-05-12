@@ -89,23 +89,41 @@ class Population
   def mutate_pool!
     random = Random.new
     @pool.each do |gene|
-      gene.mutate! if random.rand < @mutate_prob
+      spawn do
+        gene.mutate! if random.rand < @mutate_prob
+      end
     end
+
+    Fiber.yield
   end
 
   def breed!
-    (@size - @pool.size).times do
-      rand_parent_indices = (0...@pool.size).to_a.shuffle[0...2]
+    chan = Channel(String).new
+    num_children = @size - @pool.size
 
-      gene1_index, gene2_index = rand_parent_indices
-      gene1, gene2 = @pool[gene1_index], @pool[gene2_index]
+    num_children.times do
+      spawn do
+        rand_parent_indices = (0...@pool.size).to_a.shuffle[0...2]
 
-      code_mid_index = @goal_length // 2
-      crossover_code = gene1.code[0...code_mid_index] + gene2.code[code_mid_index...]
+        gene1_index, gene2_index = rand_parent_indices
+        gene1, gene2 = @pool[gene1_index], @pool[gene2_index]
 
-      child = Gene.new(crossover_code)
+        code_mid_index = @goal_length // 2
+        crossover_code = gene1.code[0...code_mid_index] + gene2.code[code_mid_index...]
+
+        chan.send(crossover_code)
+      end
+    end
+
+    children_codes = [] of String
+
+    num_children.times do
+      children_codes << chan.receive
+    end
+
+    children_codes.each do |code|
+      child = Gene.new(code)
       self.calc_cost!(child)
-
       @pool << child
     end
   end
@@ -120,8 +138,10 @@ class Population
     self.mutate_pool!
 
     @pool.each do |gene|
-      self.calc_cost!(gene)
+      spawn self.calc_cost!(gene)
     end
+
+    Fiber.yield
 
     self.sort_by_cost!
 
@@ -143,7 +163,7 @@ class Population
 end
 
 population = Population.new(
-  size = 40,
+  size = 20,
   goal = "Attention is all you need",
   keep_fittest_frac = 0.25
 )
